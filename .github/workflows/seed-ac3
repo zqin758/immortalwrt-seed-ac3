@@ -1,0 +1,152 @@
+name: Build ImmortalWRT for SEED AC5
+
+on:
+  workflow_dispatch:    # 手动触发
+  push:
+    branches: [master]
+    paths:
+      - '.config'
+      - 'feeds.conf.default'
+      - '.github/workflows/build.yml'
+      - 'files/**'
+
+  schedule:
+    - cron: '0 0 * * *'  # 每天 UTC 0 点检查上游更新(北京时间 8:00)
+
+permissions:
+  contents: write
+
+env:
+  REPO_URL: https://github.com/BeeconMini/immortalwrt.git
+  REPO_BRANCH: 25.12.0-rc2
+  TARGET: mediatek/filogic
+  DEVICE: beeconmini_seed-ac3
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout config
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt update -qq
+          sudo apt install -y -qq build-essential ccache clang cmake curl \
+            ecj fastjar file g++ gawk gettext git \
+            libelf-dev libncurses5-dev libncursesw5-dev libssl-dev \
+            python3 python3-docutils python3-setuptools rsync swig time \
+            unzip wget zlib1g-dev qemu-utils
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost
+          df -h /
+
+      - name: Clone source
+        run: |
+          git clone -b $REPO_BRANCH --single-branch $REPO_URL source
+          cd source
+          # 应用自定义 feeds 配置
+          cp $GITHUB_WORKSPACE/feeds.conf.default feeds.conf.default
+          # 应用编译配置
+          cp $GITHUB_WORKSPACE/.config .config
+          # 复制自定义文件(IP 配置等)
+          [ -d $GITHUB_WORKSPACE/files ] && cp -r $GITHUB_WORKSPACE/files ./
+          # 更新 feeds
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          # 修复 libffi feed: 上游 InstallDev 复制 fficonfig.h 的 $(GNU_TARGET_NAME)* glob
+          # 在 3.4.7 布局下匹配不到(历史两次编译失败均因此)。直接改 feed 的 Makefile,
+          # 用 find 兜底定位 fficonfig.h。
+          # 注意: 不可做成 feeds/.../libffi/patches/*.patch —— 那会被打进 libffi 源码树
+          # (run 34358095685 教训: 畸形补丁致 host prepare 的 patch 失败, 全盘编译中止)
+          python3 $GITHUB_WORKSPACE/scripts/fix-libffi-makefile.py feeds/packages/libs/libffi/Makefile
+          # 配置收敛: 历史 .config 单次 defconfig 会静默丢弃大部分已选包(固件缩水到28MB),
+          # 反复"从原始 .config 补回缺失的 =y 并 defconfig"直至稳定, 得到规范化配置。
+          PREV=-1
+          for i in 1 2 3 4 5 6 7 8; do
+            grep -hE '^CONFIG_PACKAGE_[^ =]+=y' $GITHUB_WORKSPACE/.config | while IFS= read -r line; do
+              sym="${line%%=*}"
+              if ! grep -qE "^${sym}=y$|^${sym}=m$" .config; then
+                echo "$line" >> .config
+              fi
+            done
+            make defconfig >/dev/null 2>&1
+            N=$(grep -cE '^CONFIG_PACKAGE_[a-z0-9._-]+=y' .config || true)
+            echo "第 $i 轮后 PACKAGE=y: $N"
+            if [ "$N" -eq "$PREV" ]; then echo "配置已收敛"; break; fi
+            PREV=$N
+          done
+
+      - name: Validate config (防配置丢失回归)
+        run: |
+          cd source
+          PKGS=$(grep -cE '^CONFIG_PACKAGE_[a-z0-9._-]+=y' .config || true)
+          LUCI=$(grep -cE '^CONFIG_PACKAGE_luci-app-[a-z0-9-]+=y' .config || true)
+          echo "收敛后有效包数: $PKGS, luci-app 数: $LUCI"
+          if [ "$PKGS" -lt 430 ]; then
+            echo "::error::defconfig 后包数异常($PKGS < 430), 疑似配置被静默丢弃, 终止构建"
+            exit 1
+          fi
+          if [ "$LUCI" -lt 20 ]; then
+            echo "::error::defconfig 后 luci-app 数异常($LUCI < 20), 终止构建"
+            exit 1
+          fi
+          for p in luci-app-dockerman luci-app-mwan3 nikki mwan3 dockerd; do
+            if ! grep -qE "^CONFIG_PACKAGE_$p=y" .config; then
+              echo "::error::关键包 $p 未保留!"
+              exit 1
+            fi
+          done
+          echo "关键包全部保留 ✓"
+
+      - name: Download source packages
+        run: |
+          cd source
+          make -j$(nproc) download
+        timeout-minutes: 30
+
+      - name: Build firmware
+        run: |
+          cd source
+          make -j$(nproc) V=s
+        timeout-minutes: 300
+
+      - name: Rename firmware (型号-版本命名)
+        run: |
+          cd source/bin/targets/mediatek/filogic
+          for f in immortalwrt-*-beeconmini_seed-ac3-*.bin; do
+            [ -e "$f" ] || continue
+            new=$(echo "$f" | sed -E "s/^immortalwrt-mediatek-filogic-beeconmini_seed-ac3/SEED-AC3-${REPO_BRANCH}/")
+            mv -v "$f" "$new"
+          done
+          echo "=== 重命名后产物 ==="
+          ls -la *.bin
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: seed-ac3-firmware
+          path: |
+            source/bin/targets/mediatek/filogic/*.bin
+            source/bin/targets/mediatek/filogic/*.buildinfo
+            source/bin/targets/mediatek/filogic/*.manifest
+          retention-days: 30
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_id }}
+          name: Firmware build ${{ github.run_id }}
+          body: |
+            Automated build triggered by ${{ github.event_name }}.
+            - Commit: ${{ github.sha }}
+            - Date: ${{ github.event.head_commit.timestamp || github.event.client_payload.created_at || 'manual' }}
+          files: |
+            source/bin/targets/mediatek/filogic/*.bin
+            source/bin/targets/mediatek/filogic/*.buildinfo
+          generate_release_notes: true
+          make_latest: true
