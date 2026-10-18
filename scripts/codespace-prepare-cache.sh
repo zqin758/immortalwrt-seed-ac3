@@ -30,7 +30,7 @@
 # ============================================================================
 set -uo pipefail
 
-REPO_SLUG="${REPO_SLUG:-hu2846/immortalwrt-seed-ac5}"
+REPO_SLUG="${REPO_SLUG:-zqin758/immortalwrt-seed-ac5}"
 SRC_REPO="${SRC_REPO:-https://github.com/BeeconMini/immortalwrt.git}"
 SRC_BRANCH="${SRC_BRANCH:-25.12.0-rc2}"
 CACHE_RELEASE="${CACHE_RELEASE:-prebuilt-cache}"
@@ -283,7 +283,7 @@ echo "✅ 缓存已上传。可删除本地大文件: rm -f $TARBALL ${TARBALL}.
 IMG_DIR="$WORK/source/bin/targets/mediatek/filogic"
 FIRMWARE_RELEASE="${FIRMWARE_RELEASE:-build-${SRC_BRANCH}}"
 if ls "$IMG_DIR"/*"${DEVICE}"* >/dev/null 2>&1; then
-  log "发现 ${DEVICE} 固件, 按 SEED-AC5-${SRC_BRANCH}-类型 命名并上传: $FIRMWARE_RELEASE"
+  log "发现 ${DEVICE} 固件, 按 SEED-AC3-${SRC_BRANCH}-类型 命名并上传: $FIRMWARE_RELEASE"
   STAGE="/tmp/fw-stage"; rm -rf "$STAGE"; mkdir -p "$STAGE"
   for f in "$IMG_DIR"/*"${DEVICE}"*; do
     base="$(basename "$f")"; ext="${base##*.}"
@@ -297,7 +297,7 @@ if ls "$IMG_DIR"/*"${DEVICE}"* >/dev/null 2>&1; then
   ls -lh "$STAGE"
   if ! gh release view "$FIRMWARE_RELEASE" --repo "$REPO_SLUG" >/dev/null 2>&1; then
     gh release create "$FIRMWARE_RELEASE" --repo "$REPO_SLUG" \
-      --title "SEED AC5 ${SRC_BRANCH} (Codespace build)" --notes "由 Codespace 直接编译产出。" || true
+      --title "SEED AC3 ${SRC_BRANCH} (Codespace build)" --notes "由 Codespace 直接编译产出。" || true
   fi
   gh release upload "$FIRMWARE_RELEASE" "$STAGE"/* --repo "$REPO_SLUG" --clobber
   echo "✅ 固件已上传到 Release: $FIRMWARE_RELEASE"
