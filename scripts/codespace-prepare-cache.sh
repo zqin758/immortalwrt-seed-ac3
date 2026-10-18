@@ -105,8 +105,8 @@ fi
 cp -f "$CONFIG_REPO_DIR/feeds.conf.default" feeds.conf.default
 cp -f "$CONFIG_REPO_DIR/.config" .config
 # 硬校验: .config 必须真的拷进来了(源里要含目标设备)
-if ! grep -q "beeconmini_seed-ac5" .config; then
-  echo "❌ .config 未正确应用(未找到 beeconmini_seed-ac5)! 来源: $CONFIG_REPO_DIR/.config"
+if ! grep -q "beeconmini_seed-ac3" .config; then
+  echo "❌ .config 未正确应用(未找到 beeconmini_seed-ac3)! 来源: $CONFIG_REPO_DIR/.config"
   echo "   若来源与目标相同会报 'are the same file', 说明 SCRIPT_DIR 解析有误。"
   exit 1
 fi
