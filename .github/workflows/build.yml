@@ -36,6 +36,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 360
 
+    
+  using: 'node24'
+  main: 'main.js'  
+
+  
     steps:
       - name: Checkout config
         uses: actions/checkout@v4
